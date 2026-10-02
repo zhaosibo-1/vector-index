@@ -11,19 +11,25 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
 
-      # 关键：**不装任何第三方包**就跑算法层测试。
-      # 如果某天有人在核心模块里 import 了 numpy，
+      # 关键：**只装 pytest，不装项目依赖** —— 环境里没有 fastapi /
+      # numpy 可用。如果某天有人在核心模块里 import 了 numpy，
       # 这一步会当场失败，而不是等它"看起来还能跑"。
+      #
+      # 注意"零依赖"指的是**被测的核心模块**零第三方依赖，
+      # 不是连测试框架都不要 —— 直接对着 runner 的裸 python 跑
+      # pytest 只会报 "No module named pytest"，测什么都没验到。
+      - name: 只装测试框架（无项目依赖）
+        run: pip install pytest
+
       - name: 零依赖环境下跑核心测试（不带 web 层）
         run: |
           python -m pytest tests/ \
             --ignore=tests/test_api.py \
             -q --tb=short
-
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.13"
 
       - name: 安装依赖
         run: pip install -r requirements-dev.txt
