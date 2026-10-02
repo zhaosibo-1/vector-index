@@ -1,0 +1,77 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    name: 单元测试 + 零依赖门禁
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # 关键：**不装任何第三方包**就跑算法层测试。
+      # 如果某天有人在核心模块里 import 了 numpy，
+      # 这一步会当场失败，而不是等它"看起来还能跑"。
+      - name: 零依赖环境下跑核心测试（不带 web 层）
+        run: |
+          python -m pytest tests/ \
+            --ignore=tests/test_api.py \
+            -q --tb=short
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: 安装依赖
+        run: pip install -r requirements-dev.txt
+
+      - name: 零依赖门禁（静态 AST + 动态拦截 + 反向校验豁免）
+        run: python scripts/check_core_isolation.py
+
+      - name: 全量单测
+        run: python -m pytest tests/ -q --tb=short
+
+  e2e:
+    name: 端到端黑盒验收
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - name: 安装依赖
+        run: pip install -r requirements-dev.txt
+      - name: 启动服务
+        run: |
+          nohup python -m uvicorn app.main:app --host 127.0.0.1 --port 8131 &
+          sleep 3
+      - name: 跑端到端验收
+        run: python scripts/e2e_check.py --base http://127.0.0.1:8131
+
+  benchmark:
+    name: 基准可复现性
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - name: 安装依赖
+        run: pip install -r requirements-dev.txt
+      - name: 固定 seed 跑两次基准，断言召回率完全一致
+        run: python scripts/repro_check.py
+
+  docker:
+    name: Docker 构建
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: 构建镜像
+        run: docker build -t vector-index:ci .
+      - name: 镜像里没有 .env
+        run: |
+          docker run --rm --entrypoint sh vector-index:ci \
+            -c '[ ! -f /app/.env ] && echo OK || (echo ".env 泄漏进镜像" && exit 1)'
